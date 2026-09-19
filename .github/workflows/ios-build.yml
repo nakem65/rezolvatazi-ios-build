@@ -1,0 +1,58 @@
+name: Build and submit iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-26
+    timeout-minutes: 50
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_NO_VCS: "1"
+      CI: "1"
+    steps:
+      - name: Check out the build mirror
+        uses: actions/checkout@v4
+
+      - name: Extract isolated mobile source
+        run: unzip -q source.zip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Type-check the mobile app
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Build the signed production IPA
+        working-directory: mobile
+        shell: bash
+        run: |
+          set +e
+          npx eas-cli@21.0.2 build --platform ios --profile production \
+            --local --non-interactive --output ../artifacts/RezolvatAzi.ipa \
+            >"$RUNNER_TEMP/eas-ios-build.log" 2>&1
+          build_status=$?
+          sed -E \
+            -e '/eas-cli-local-build-plugin/d' \
+            -e '/provisioningProfileBase64/d' \
+            -e '/distributionCertificate/d' \
+            -e '/buildCredentials/d' \
+            "$RUNNER_TEMP/eas-ios-build.log"
+          exit "$build_status"
+
+      - name: Upload the build to App Store Connect
+        working-directory: mobile
+        run: npx eas-cli@21.0.2 submit --platform ios --path ../artifacts/RezolvatAzi.ipa --profile production --non-interactive
